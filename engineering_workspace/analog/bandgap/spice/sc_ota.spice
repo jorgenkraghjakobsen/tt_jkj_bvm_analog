@@ -1,0 +1,113 @@
+* ============================================================
+* sc_ota.spice -- OTA for the switched-capacitor bandgap
+*
+* REQUIREMENT (BANDGAP_NOTES.md section 2)
+*     beta  = 0.0727,  eps = 0.5 mV on 1.25 V
+*     A_min = 1/(beta*eps) = 90.7 dB
+*     GBW   = 6.68 MHz,  gm1 = 31.5 uS at Cc = 750 fF
+*
+* WHY PLAIN TWO-STAGE, NOT CASCODED
+*
+* Intrinsic gain scales with channel length. At ID = 2.1 uA and
+* gm/ID = 15, with an Early voltage near 10 V per um of L:
+*
+*     L = 0.5 um   63 dB     <- Rev19 sits here. 28 dB short.
+*     L = 1   um   75 dB
+*     L = 2   um   87 dB
+*     L = 4   um   99 dB     <- clears 90.7 with ~9 dB margin
+*
+* So length alone gets there. A cascode would too, but it needs a bias
+* voltage: sky130's |Vth_p| is about 0.8 V, so a cascode gate at 0.95 V
+* leaves almost no overdrive, starves the branch and parks the load in
+* triode. A plain mirror has no such voltage to get wrong, and the area
+* cost of long devices (~1300 um^2) is small beside the 3844 um^2 MIM
+* array.
+*
+* POLARITY -- easy to invert, and the amp then latches to a rail.
+*   vinn (INVERTING) is on the DIODE side of the mirror (XM1 -> n1a).
+*   vinp drives the node feeding stage 2 (XM2 -> n1).
+*   Check: vinn up -> XM1 up -> mirror pushes more into n1 -> n1 up
+*          -> stage-2 PMOS off -> vout DOWN. Inverting. Correct.
+*
+* ota_en gates the tail AND the stage-2 sink, so burst mode really
+* saves current.
+* ============================================================
+
+.subckt sc_ota vinp vinn vout ota_en vbias_n VDD VSS
+
+* ---- gain path: long channels -------------------------------
+.param w_in    = 40
+.param l_in    = 4
+* The LOAD is deliberately SHORTER than the input pair.
+*
+* Its gate capacitance sets the mirror pole, p ~ 1/(L^1.5 * sqrt(W)).
+* Measured: W=20 L=4 gave a 2.6 MHz pole and PM = 14 deg.
+*           W=20 L=2 gave 7.4 MHz and PM = 37 deg.
+*           W=20 L=1 puts it near 21 MHz, clear of 3x GBW.
+* The load's job is current, not output resistance -- the input
+* device's ro dominates the parallel combination anyway, which is why
+* shortening the load cost only 0.6 dB of gain, not the 6 expected.
+.param w_load  = 20
+.param l_load  = 1
+.param w_tail  = 16
+.param l_tail  = 4
+
+* ---- stage 2 ------------------------------------------------
+* Doubled from 5 to 10 uA. The output pole is gm2/(2*pi*CL), and at
+* 5 uA it sat at 8 MHz -- too close to a 4.5 MHz crossing. 10 uA puts
+* it near 16 MHz.
+*
+* This costs no gain: gm2 doubles while ro2 halves. It costs no BURST
+* current either, because ota_en gates both the tail and this sink, so
+* the amp is off during hold. Continuous mode goes to about 14 uA
+* against a 15 uA spec -- within budget, but it spends the margin.
+.param w_out   = 80
+.param l_out   = 2
+.param w_osink = 80
+.param l_osink = 4
+
+.param cc      = 750f
+
+* Nulling resistor. 1/gm2 (13 k) cancels the RHP zero; (1/gm2)(1+CL/Cc)
+* puts a LHP zero on top of the output pole and cancels that too.
+* Rz also forms a pole with the capacitance on node n1. At 40 k that
+* landed at 8 MHz and cost as much phase as it saved. With stage 2 at
+* 10 uA, gm2 ~ 150 uS, the optimum drops to 20 k and its pole moves
+* out to ~16 MHz.
+.param rz      = 20k
+
+* ---- enable switches ----------------------------------------
+* Fixed, modest size. These only pass microamps, and sky130's models
+* are BINNED: a device wider than about 100 um matches no bin and
+* ngspice fails with "could not find a valid modelname". Scaling these
+* from the device they gate gave W = 160 um and did exactly that.
+* W/L = 10/0.15 is a few hundred ohms on, i.e. ~1.5 mV across it at
+* 5 uA -- far more than enough.
+.param w_sw    = 10
+.param l_sw    = 0.15
+
+* ---- tail current, gated ------------------------------------
+XMtail ntail vbias_n nsw VSS sky130_fd_pr__nfet_01v8
++      L={l_tail} W={w_tail} nf=1 m=1
+XMen   nsw   ota_en  VSS VSS sky130_fd_pr__nfet_01v8
++      L={l_sw} W={w_sw} nf=1 m=1
+
+* ---- stage 1: NMOS pair, simple PMOS mirror load -------------
+XM1 n1a vinn ntail VSS sky130_fd_pr__nfet_01v8 L={l_in} W={w_in} nf=4 m=1
+XM2 n1  vinp ntail VSS sky130_fd_pr__nfet_01v8 L={l_in} W={w_in} nf=4 m=1
+
+XM3 n1a n1a VDD VDD sky130_fd_pr__pfet_01v8 L={l_load} W={w_load} nf=2 m=1
+XM4 n1  n1a VDD VDD sky130_fd_pr__pfet_01v8 L={l_load} W={w_load} nf=2 m=1
+
+* ---- stage 2: common-source PMOS, mirrored NMOS sink ---------
+XM7 vout n1 VDD VDD sky130_fd_pr__pfet_01v8 L={l_out} W={w_out} nf=4 m=1
+XM8 vout vbias_n n8s VSS sky130_fd_pr__nfet_01v8
++   L={l_osink} W={w_osink} nf=2 m=1
+XM8e n8s ota_en VSS VSS sky130_fd_pr__nfet_01v8
++   L={l_sw} W={w_sw} nf=1 m=1
+
+* ---- Miller compensation with nulling resistor ---------------
+Rz1 n1 nz {rz}
+Cc1 nz vout {cc}
+
+.ends sc_ota

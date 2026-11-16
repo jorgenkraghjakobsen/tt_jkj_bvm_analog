@@ -1,0 +1,95 @@
+* ============================================================
+* bias_gen.spice -- 5-bit binary-weighted current mirror, 1-32 uA
+*
+* REV 2, 2026-11-14. Rev 1 was non-monotonic. See "THE FIX" below.
+*
+* bias_trim[4:0] from the register bank selects multiples of a unit
+* current. Unit devices are all identical and placed in a common-
+* centroid array in layout -- binary weighting comes from device
+* COUNT (m=1,2,4,8,16), never from different widths. Getting this
+* wrong is the usual reason a trimmed mirror is non-monotonic.
+* ============================================================
+
+.subckt bias_gen nbias_in b0 b1 b2 b3 b4 en iout VDD VSS
+
+.param wu  = 4           $ unit device width
+.param lu  = 2           $ unit device length -- long for matching
+.param wsw = 4           $ drain-switch width PER UNIT
+.param lsw = 0.15
+
+* ---- THE FIX: gates hard-wired to the bias node -----------------
+* Rev 1 switched the GATE, and held each gate at VSS through a 10 M
+* pulldown. An ENABLED leg therefore put its pulldown across the
+* bias node and drew 0.5988 V / 10 M = 59.9 nA out of the reference.
+* On a 1 uA reference that is -6.0 % per enabled leg, so the output
+* drooped with the NUMBER of legs on, not with the code value, and
+* the converter went non-monotonic.
+*
+* Measured 2026-11-14 through an ideal 1 uA reference -- per-unit
+* current for 1,2,3,4,5 legs enabled:
+*     1.063  0.999  0.935  0.872  0.810 uA     (-0.064 each)
+* Code 15 (13.084) came out BELOW code 14 (13.093), and full scale
+* compressed from 32 uA to 25.1 uA.
+*
+* Gates now connect straight to nbias_in. The reference sees only
+* gate capacitance, so the DC load is zero and identical at every
+* code. Selection moves to the drain.
+XM0 nd0 nbias_in VSS VSS sky130_fd_pr__nfet_01v8 L={lu} W={wu} nf=1 m=1
+XM1 nd1 nbias_in VSS VSS sky130_fd_pr__nfet_01v8 L={lu} W={wu} nf=1 m=2
+XM2 nd2 nbias_in VSS VSS sky130_fd_pr__nfet_01v8 L={lu} W={wu} nf=1 m=4
+XM3 nd3 nbias_in VSS VSS sky130_fd_pr__nfet_01v8 L={lu} W={wu} nf=1 m=8
+XM4 nd4 nbias_in VSS VSS sky130_fd_pr__nfet_01v8 L={lu} W={wu} nf=1 m=16
+
+* ---- selection: switch the DRAIN --------------------------------
+* A leg whose drain is open cannot conduct, so selection is
+* unchanged, but the switch now sits where its Vds does not set the
+* leg current.
+*
+* Switch multiplicity MUST track the leg it serves. Equal-width
+* switches would drop 16x more across the m=16 leg than the m=1 leg
+* and the binary weighting would break -- which is the same class of
+* mistake as weighting by width instead of by count.
+XSW0 ncom b0 nd0 VSS sky130_fd_pr__nfet_01v8 L={lsw} W={wsw} nf=1 m=1
+XSW1 ncom b1 nd1 VSS sky130_fd_pr__nfet_01v8 L={lsw} W={wsw} nf=1 m=2
+XSW2 ncom b2 nd2 VSS sky130_fd_pr__nfet_01v8 L={lsw} W={wsw} nf=1 m=4
+XSW3 ncom b3 nd3 VSS sky130_fd_pr__nfet_01v8 L={lsw} W={wsw} nf=1 m=8
+XSW4 ncom b4 nd4 VSS sky130_fd_pr__nfet_01v8 L={lsw} W={wsw} nf=1 m=16
+
+* ---- master enable ----------------------------------------------
+* Rev 1 listed 'en' as a port and connected it to NOTHING, so
+* reg_bank's bias_en bit did nothing at all and the bank could never
+* be switched off. It goes on the drain side, above the switches,
+* where it cannot degenerate the mirror the way a source-side
+* device would.
+XMEN iout en ncom VSS sky130_fd_pr__nfet_01v8 L={lsw} W=16 nf=1 m=4
+
+* ---- KNOWN REMAINING ERROR: +5.0 % gain ------------------------
+* Each leg sits well above the reference diode's own Vgs of ~0.6 V,
+* so channel-length modulation makes every leg run above the
+* reference. Measured: 1.0499 uA per unit for a verified 1.000 uA
+* reference, i.e. +5.0 %.
+*
+* CORRECTED 2026-11-14. An earlier note here claimed the drain
+* switches "drop under 1 mV, so they are not cascodes". That was
+* wrong, from estimating Ron as a triode resistance and never
+* checking the follower clamp. XSW0..4 pass current from a 1.8 V
+* drain into ndN with their gates at 1.8 V, so they CANNOT hold
+* their sources above VDD - Vth ~ 1.35 V -- they are source
+* followers. The legs therefore sit near 1.25 V, not 1.8 V, and that
+* headroom is why the error is +5.0 % here instead of +13 %.
+*
+* Measured evidence for the +13 % figure: a bare nfet W=4 L=2 at
+* Vds = 1.8 V reads 1.1298 uA against a diode-connected copy of
+* itself carrying a verified 1.001 uA (tb_resistor_ref, v_nb =
+* 0.59885 V). Rev 1 of this file read 1.063 uA, but its reference
+* had been pulled down to ~0.940 uA by the gate pulldowns, so the
+* true ratio there was 1.063/0.940 = +13.1 % -- the same number.
+*
+* The remaining +5.0 % is deliberately left in. It is a systematic
+* gain error on every code equally -- the LSB is 1.0499 uA, so full
+* scale lands at 32.468 uA instead of 32 -- which for a bias trim is
+* a specification detail, not a defect. Removing it needs a real
+* cascode with its own bias AND a cascoded reference diode to match.
+* Do that only if the 1-32 uA range turns out to be hard-limited at
+* the top.
+.ends bias_gen

@@ -1,0 +1,57 @@
+* ============================================================
+* clk_doubler.spice -- XOR(clk, delayed clk) -> 2x frequency
+*
+* 50 MHz in, 100 MHz out. The delay should be a quarter period
+* (5 ns at 50 MHz) so the output duty is near 50 %.
+*
+* The delay chain is current-starved and biased from bias_gen, so the
+* trim code moves the delay. That is deliberate: it lets you correct
+* duty on silicon. It also means the doubler's duty varies with PVT,
+* which directly modulates the DAC output -- budget for it.
+*
+* The output duty error translates to a DC offset at the DAC. If the
+* doubled clock is 45/55 instead of 50/50, PWM 0 sees a systematic
+* duty error. Measure this before trusting the DAC's absolute accuracy.
+* ============================================================
+
+.subckt clk_doubler clkin clkout en vbias_n VDD VSS
+
+.param wn = 1
+.param wp = 2
+.param l_n = 0.15
+.param lp = 0.15
+.param cdel = 40f        $ per-stage load, sets the delay with the starve current
+
+* ---- current-starved delay stages ------------------------------
+.subckt starved_inv a y vbn VDD VSS
+XMp y a np  VDD sky130_fd_pr__pfet_01v8 L=0.15 W=2 nf=1 m=1
+XMn y a nn  VSS sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 m=1
+XMps np vbn VDD VDD sky130_fd_pr__pfet_01v8 L=1 W=2 nf=1 m=1
+XMns nn vbn VSS VSS sky130_fd_pr__nfet_01v8 L=1 W=1 nf=1 m=1
+.ends starved_inv
+
+Xd1 clkin  nd1 vbias_n VDD VSS starved_inv
+Cd1 nd1 VSS {cdel}
+Xd2 nd1    nd2 vbias_n VDD VSS starved_inv
+Cd2 nd2 VSS {cdel}
+Xd3 nd2    nd3 vbias_n VDD VSS starved_inv
+Cd3 nd3 VSS {cdel}
+Xd4 nd3    ndly vbias_n VDD VSS starved_inv
+Cd4 ndly VSS {cdel}
+
+* ---- XOR (transmission-gate style, compact) --------------------
+XMinv_a nclk clkin VDD VDD sky130_fd_pr__pfet_01v8 L=0.15 W=2 nf=1 m=1
+XMinv_b nclk clkin VSS VSS sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 m=1
+XMinv_c ndlyb ndly VDD VDD sky130_fd_pr__pfet_01v8 L=0.15 W=2 nf=1 m=1
+XMinv_d ndlyb ndly VSS VSS sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 m=1
+
+XTG1a nxor clkin  ndly  VSS sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 m=1
+XTG1b nxor nclk   ndlyb VSS sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 m=1
+
+* ---- enable gate and output buffer -----------------------------
+XMg1 ngate nxor VDD VDD sky130_fd_pr__pfet_01v8 L=0.15 W=4 nf=1 m=1
+XMg2 ngate nxor VSS VSS sky130_fd_pr__nfet_01v8 L=0.15 W=2 nf=1 m=1
+XMe1 clkout ngate VDD VDD sky130_fd_pr__pfet_01v8 L=0.15 W=8 nf=1 m=1
+XMe2 clkout ngate VSS VSS sky130_fd_pr__nfet_01v8 L=0.15 W=4 nf=1 m=1
+
+.ends clk_doubler

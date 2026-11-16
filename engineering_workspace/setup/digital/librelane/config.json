@@ -1,0 +1,44 @@
+{
+  "DESIGN_NAME": "dig_top",
+
+  "VERILOG_FILES": [
+    "dir::../../../digital/spi_slave/rtl/spi_slave.v",
+    "dir::../../../digital/reg_bank/rtl/reg_bank.v",
+    "dir::../../../digital/pwm/rtl/pwm.v",
+    "dir::../../../digital/dig_top/rtl/bg_seq.v",
+    "dir::../../../digital/dig_top/rtl/dig_top.v"
+  ],
+
+  "CLOCK_PORT": "clk",
+  "CLOCK_PERIOD": 20,
+  "CLOCK_NET": "clk",
+
+  "PNR_SDC_FILE": "dir::dig_top.sdc",
+  "SIGNOFF_SDC_FILE": "dir::dig_top.sdc",
+
+  "PDK": "sky130A",
+  "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+
+  "FP_SIZING": "absolute",
+  "DIE_AREA": [0, 0, 190, 130],
+  "FP_CORE_UTIL": 45,
+  "PL_TARGET_DENSITY_PCT": 55,
+
+  "FP_PDN_MULTILAYER": false,
+  "RT_MAX_LAYER": "met4",
+
+  "GRT_ALLOW_CONGESTION": false,
+  "RUN_HEURISTIC_DIODE_INSERTION": true,
+  "DESIGN_REPAIR_MAX_SLEW_PCT": 15,
+
+  "SYNTH_AUTONAME": true,
+
+  "__COMMENT_METAL5":
+    "Metal 5 is reserved for the Tiny Tapeout power grid. RT_MAX_LAYER is held at met4 so the macro leaves met5 free for integration.",
+
+  "__COMMENT_DIE_AREA":
+    "190 x 130 um. Sized from the real LibreLane synthesis area of 8012.7 um2 (NOT the 6945 um2 that plain yosys reports). Core margins remove ~29% and repair buffering grows it further; 150 x 130 gave effective utilisation 0.739 and failed detailed placement with DPL-0036.",
+
+  "__COMMENT_CLOCK":
+    "20 ns = 50 MHz, the Tiny Tapeout harness maximum. SPI SCK is oversampled by this clock, so keep SCK below about 5 MHz."
+}

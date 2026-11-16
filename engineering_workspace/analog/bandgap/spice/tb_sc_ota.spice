@@ -1,0 +1,97 @@
+* ============================================================
+* tb_sc_ota.spice -- does the OTA meet the charge-transfer spec?
+*
+*   DC gain       >= 90.7 dB
+*   GBW           >= 6.68 MHz
+*   phase margin  >= 60 deg at beta = 1 (the phi1 auto-zero case)
+*
+* Everything is PRINTED, not just plotted -- a deck whose findings only
+* reach a CSV is a deck whose findings you do not read.
+* ============================================================
+
+.lib $PDK_ROOT/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+.include "sc_ota.spice"
+
+.param VCM   = 0.9
+.param CLOAD = 1.5p
+
+Vdd VDD 0 1.8
+Vss VSS 0 0
+Ven ota_en 0 1.8
+
+* 2 uA reference. Same L as the tail device so the mirror is exact.
+Ib VDD nbias 2u
+XMb nbias nbias VSS VSS sky130_fd_pr__nfet_01v8 L=4 W=16 nf=1 m=1
+
+* ---- unity-gain feedback, opened for AC by a 1 TH inductor ----
+Vin vinp 0 {VCM} AC 1
+Lbrk vout vinn 1T
+Cbrk vinn 0 1T
+
+Xota vinp vinn vout ota_en nbias VDD VSS sc_ota
+Cl vout 0 {CLOAD}
+
+.control
+set color0=white
+
+echo " "
+echo "=== STEP 1: operating point ==="
+op
+print v(vout) v(vinn) v(nbias)
+print v(Xota.n1) v(Xota.n1a) v(Xota.ntail) v(Xota.nsw)
+print i(Vdd)
+echo " "
+echo "WANT: v(vout) near 0.9     -- the unity-gain loop is holding"
+echo "      v(ntail) 0.2 to 0.4  -- tail device in saturation, NOT 0"
+echo "      v(n1a) around 1.0    -- diode-connected load has headroom"
+echo "      i(Vdd) around 9 uA   -- 2 bias + 2 tail + 5 stage 2"
+echo "If vout is at 0 or 1.8 the loop has latched; check polarity."
+
+echo " "
+echo "=== STEP 2: DC transfer, does the follower track? ==="
+dc Vin 0.5 1.4 0.05
+print v(vout)
+echo "vout should follow vinp across the middle of this range."
+
+echo " "
+echo "=== STEP 3: open-loop gain and phase ==="
+ac dec 100 0.1 1G
+let mag_db = db(v(vout))
+let ph_deg = 180/PI*ph(v(vout))
+
+* Shape first: these always succeed, even if the 0 dB crossing does not.
+meas ac a_1hz   FIND mag_db AT=1
+meas ac a_1k    FIND mag_db AT=1k
+meas ac a_100k  FIND mag_db AT=100k
+meas ac a_1meg  FIND mag_db AT=1meg
+meas ac a_10meg FIND mag_db AT=10meg
+
+print a_1hz
+print a_1k
+print a_100k
+print a_1meg
+print a_10meg
+
+echo " "
+echo "--- unity-gain crossing (fails harmlessly if gain never reaches 0 dB)"
+meas ac gbw WHEN mag_db=0 FALL=1
+meas ac ph_at_gbw FIND ph_deg WHEN mag_db=0 FALL=1
+let pm = 180 + ph_at_gbw
+print gbw
+print pm
+
+echo " "
+echo "ACCEPTANCE (beta = 1):"
+echo "   a_1hz >= 90.7 dB"
+echo "   gbw   >= 6.68 MHz"
+echo "   pm    >= 60 deg"
+echo " "
+echo "a_1hz short -> raise l_in and l_load (4 -> 6 or 8 um)"
+echo "pm short    -> raise cc, then re-check gbw"
+echo "gbw short   -> raise w_tail for more tail current, re-check pm"
+
+wrdata ota_ac.csv mag_db ph_deg
+plot mag_db
+plot ph_deg
+.endc
+.end

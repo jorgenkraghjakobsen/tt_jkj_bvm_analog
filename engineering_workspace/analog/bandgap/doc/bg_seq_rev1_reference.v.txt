@@ -1,0 +1,162 @@
+`timescale 1ns / 1ps
+
+// ============================================================
+// bg_seq.v
+// Switched-capacitor bandgap phase sequencer
+// ASIC RTL - SKY130 / Tiny Tapeout
+// Clock: 50 MHz
+// ============================================================
+
+module bg_seq (
+    input  wire       clk,
+    input  wire       rst_n,
+    input  wire       en,
+
+    input  wire [2:0] div_sel,
+    input  wire       burst,
+    input  wire [3:0] hold_exp,
+
+    output reg        phi1,
+    output reg        phi2,
+    output reg        cap,
+    output reg        ota_en,
+    output reg        i8_en,
+    output reg        valid
+);
+
+    localparam P1   = 2'd0;
+    localparam P2   = 2'd1;
+    localparam HOLD = 2'd2;
+
+    wire [11:0] slot;
+    assign slot = 12'd16 << div_sel;
+
+    reg [11:0] cnt;
+    reg [15:0] hcnt;
+    reg [1:0]  state;
+    reg [2:0]  updates;
+
+    wire last;
+    wire inner;
+    wire hold_done;
+    wire wake;
+
+    assign last = (cnt == slot - 12'd1);
+
+    // One clock at the beginning and one at the end
+    // are inactive, giving two clocks of dead time
+    // across each phase boundary.
+    assign inner = (cnt != 12'd0) && !last;
+
+    assign hold_done =
+        (hcnt == ((16'd1 << hold_exp) - 16'd1));
+
+    // Enable OTA during the final HOLD slot,
+    // before normal operation resumes.
+    assign wake = (state == HOLD) && hold_done;
+
+    always @(posedge clk or negedge rst_n) begin
+
+        if (!rst_n) begin
+
+            state   <= P1;
+            cnt     <= 12'd0;
+            hcnt    <= 16'd0;
+            updates <= 3'd0;
+
+            phi1    <= 1'b0;
+            phi2    <= 1'b0;
+            cap     <= 1'b0;
+            ota_en  <= 1'b0;
+            i8_en   <= 1'b0;
+            valid   <= 1'b0;
+
+        end
+
+        else if (!en) begin
+
+            state   <= P1;
+            cnt     <= 12'd0;
+            hcnt    <= 16'd0;
+            updates <= 3'd0;
+
+            phi1    <= 1'b0;
+            phi2    <= 1'b0;
+            cap     <= 1'b0;
+            ota_en  <= 1'b0;
+            i8_en   <= 1'b0;
+            valid   <= 1'b0;
+
+        end
+
+        else begin
+
+            // Slot counter
+            if (last)
+                cnt <= 12'd0;
+            else
+                cnt <= cnt + 12'd1;
+
+            // Phase outputs
+            phi1 <= (state == P1) && inner;
+            phi2 <= (state == P2) && inner;
+
+            // One-clock capture pulse near end of phi2
+            cap <= (state == P2) &&
+                   (cnt == slot - 12'd2);
+
+            // 8x current during the complete P1 slot
+            i8_en <= (state == P1);
+
+            // OTA active during operation and final HOLD slot
+            ota_en <= (state != HOLD) || wake;
+
+            // Four completed updates required
+            valid <= (updates == 3'd4);
+
+            if (last) begin
+
+                case (state)
+
+                    P1: begin
+                        state <= P2;
+                    end
+
+                    P2: begin
+
+                        if (updates != 3'd4)
+                            updates <= updates + 3'd1;
+
+                        hcnt <= 16'd0;
+
+                        if (burst)
+                            state <= HOLD;
+                        else
+                            state <= P1;
+
+                    end
+
+                    HOLD: begin
+
+                        if (hold_done) begin
+                            state <= P1;
+                        end
+                        else begin
+                            hcnt <= hcnt + 16'd1;
+                        end
+
+                    end
+
+                    default: begin
+                        state <= P1;
+                    end
+
+                endcase
+
+            end
+
+        end
+
+    end
+
+endmodule

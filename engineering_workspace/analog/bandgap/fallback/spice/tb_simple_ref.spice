@@ -1,0 +1,41 @@
+* ============================================================
+* tb_simple_ref.spice -- start-up and corner/temperature sweep
+*
+* The start-up transient is the test that matters. A beta-multiplier
+* with a dead start-up branch looks perfect in .op and never turns on
+* in silicon.
+* ============================================================
+
+.lib $PDK_ROOT/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+.include "simple_ref.spice"
+
+Vdd VDD 0 PWL(0 0 50u 1.8 500u 1.8)
+Vss VSS 0 0
+
+Xref nbias pbias VDD VSS simple_ref
+
+* Mirror the output into a measurable branch
+XMsense nsense nbias VSS VSS sky130_fd_pr__nfet_01v8 L=2 W=4 nf=1 m=1
+Vsense VDD nsense 0
+
+.control
+set color0=white
+
+echo " "
+echo "--- start-up from a 50 us supply ramp ---"
+tran 100n 500u
+let iref = -i(Vsense)
+plot iref
+meas tran i_final FIND iref AT=450u
+echo "If i_final is ~0 the start-up branch has failed. Fix it before layout."
+
+echo " "
+echo "--- temperature sweep at the final operating point ---"
+foreach t -40 0 27 85 125
+  set temp=$t
+  op
+  echo "T = $t C"
+  print -i(Vsense)
+end
+.endc
+.end

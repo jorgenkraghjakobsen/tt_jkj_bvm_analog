@@ -1,0 +1,94 @@
+# ============================================================
+# Tiny Tapeout project information -- TTSKY26d (SKY130)
+#
+# REV 2, 2026-11-14. Checked field by field against the real
+# template at github.com/TinyTapeout/ttsky-analog-template.
+# Rev 1 was missing uses_vapwr, yaml_version and ua[3..5].
+# ============================================================
+project:
+  title:        "BVM Mixed-Signal Tile"
+  author:       "BVM Engineering College / IC Works"
+  discord:      ""
+  description:  "SPI-controlled mixed-signal tile: register bank, two PWM generators, voltage reference, trimmed bias generator, clock doubler and a PWM DAC."
+
+  # The template's example value is plain "Analog". Keep it that way
+  # -- this field feeds the shuttle datasheet and may be validated.
+  language:     "Analog"
+  clock_hz:     50000000
+
+  # Valid values for analog projects: 1x2, 2x2.
+  # 2x2 = 334.88 x 225.76 um, confirmed from the DIEAREA in
+  # tt-support-tools/tech/sky130A/def/analog/tt_analog_2x2.def.
+  # The 1x2 (161.00 x 225.76) does NOT work: LibreLane synthesis gives
+  # dig_top = 8012.7 um2 of cells, and a routable macro needs ~144 um
+  # of die height, leaving ~81 um where the bandgap needs 90. The
+  # 6945 um2 that plain yosys reported was 15 % optimistic.
+  # Pins are identical on both templates, so the extra 173.88 um of
+  # 2x2 width is unencumbered free area -- which is now schedule
+  # margin rather than area margin.
+  tiles:        "2x2"
+
+  # Valid values: 0 to 6.
+  # 2, not 3: pwm_dac was descoped on 2026-11-14 so ua[2] is unused.
+  # precheck's analog_pin_check is bidirectional -- a pin with metal
+  # near it but no description fails, AND a pin with a description but
+  # no metal fails. So ua[2] below must stay EMPTY and the layout must
+  # keep all met4 and vias 0.5 um clear of its rect at x = 113.62.
+  analog_pins:  2
+
+  # True only with the 3.3 V analog template. This tile is 1.8 V.
+  uses_vapwr:   false
+
+  # Must start with tt_um_ and be UNIQUE ON THE SHUTTLE. The
+  # template advises including your GitHub username. This name is
+  # baked into the GDS cell and both filenames
+  # (gds/<top_module>.gds, lef/<top_module>.lef), so changing it
+  # after layout means re-exporting -- decide now.
+  top_module:   "tt_um_bvm_mixed_signal_tile"
+
+  source_files:
+    - "project.v"
+
+# The pinout of your project. Leave unused pins blank.
+# DO NOT delete or add any pins.
+pinout:
+  # Inputs
+  ui[0]: ""
+  ui[1]: ""
+  ui[2]: ""
+  ui[3]: ""
+  ui[4]: ""
+  ui[5]: ""
+  ui[6]: ""
+  ui[7]: ""
+
+  # Outputs
+  uo[0]: "PWM 0 (also drives the DAC filter)"
+  uo[1]: "PWM 1"
+  uo[2]: ""
+  uo[3]: ""
+  uo[4]: ""
+  uo[5]: ""
+  uo[6]: ""
+  uo[7]: ""
+
+  # Bidirectional pins
+  uio[0]: "SPI CS_N (in)"
+  uio[1]: "SPI MOSI (in)"
+  uio[2]: "SPI MISO (out)"
+  uio[3]: "SPI SCK (in)"
+  uio[4]: ""
+  uio[5]: ""
+  uio[6]: ""
+  uio[7]: ""
+
+  # Analog pins - analog_pins above must match how many you use
+  ua[0]: "VREF, buffered reference output"
+  ua[1]: "Bias current monitor"
+  ua[2]: ""
+  ua[3]: ""
+  ua[4]: ""
+  ua[5]: ""
+
+# Do not change!
+yaml_version: 6

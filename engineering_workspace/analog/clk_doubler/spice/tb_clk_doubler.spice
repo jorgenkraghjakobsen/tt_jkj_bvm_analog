@@ -1,0 +1,41 @@
+* ============================================================
+* tb_clk_doubler.spice -- frequency doubling and output duty
+*
+* The number that matters is OUTPUT DUTY, not just "it doubled".
+* A duty error feeds straight through PWM 0 into the DAC as a DC
+* offset, so measure it and budget for it.
+* ============================================================
+
+.lib $PDK_ROOT/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+.include "clk_doubler.spice"
+.include "../../bandgap/fallback/spice/simple_ref.spice"
+
+Vdd VDD 0 1.8
+Vss VSS 0 0
+
+* 50 MHz square wave, 100 ps edges
+Vclk clkin 0 PULSE(0 1.8 0 100p 100p 9.8n 20n)
+Ven  en    0 1.8
+
+Xref nbias pbias VDD VSS simple_ref
+Xdbl clkin clkout en nbias VDD VSS clk_doubler
+
+Cl clkout 0 20f
+
+.control
+set color0=white
+tran 20p 400n
+
+echo " "
+echo "--- doubled clock ---"
+plot v(clkin) v(clkout)
+
+* Average of a 0/1.8 V square wave gives duty directly.
+meas tran vavg AVG v(clkout) FROM=200n TO=400n
+let duty = vavg / 1.8
+print vavg
+print duty
+echo "Output duty = vavg / 1.8 ; target 0.50"
+echo "Tune the cdel parameter or the bias trim to centre it."
+.endc
+.end

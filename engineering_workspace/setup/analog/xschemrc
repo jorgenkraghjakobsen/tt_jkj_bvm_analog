@@ -1,0 +1,30 @@
+# ============================================================
+# Project xschemrc
+#
+# Start xschem from a block's spice/ directory with:
+#   XSCHEMRC=../../../setup/analog/xschemrc xschem
+# or copy this file into the block directory.
+#
+# It sources the PDK's own xschemrc first, then adds this project's
+# blocks so cross-block symbols resolve.
+# ============================================================
+
+if { ![info exists ::env(PDK_ROOT)] } {
+    puts "xschemrc: PDK_ROOT is not set. Analog symbols will not resolve."
+} else {
+    set PDK_ROOT $::env(PDK_ROOT)
+    if { [file exists $PDK_ROOT/sky130A/libs.tech/xschem/xschemrc] } {
+        source $PDK_ROOT/sky130A/libs.tech/xschem/xschemrc
+    }
+}
+
+# Project blocks, so e.g. pwm_dac can instance out_buf.
+set PROJ_ROOT [file normalize [file join [file dirname [info script]] .. ..]]
+foreach blk {bandgap bias_gen clk_doubler out_buf pwm_dac tt_analog_top} {
+    set p [file join $PROJ_ROOT analog $blk]
+    if { [file isdirectory $p] } {
+        append XSCHEM_LIBRARY_PATH ":$p"
+    }
+}
+
+set netlist_dir [file join $PROJ_ROOT obj]

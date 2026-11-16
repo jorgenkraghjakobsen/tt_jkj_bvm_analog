@@ -1,0 +1,68 @@
+* ============================================================
+* simple_ref.spice -- constant-gm (beta-multiplier) current reference
+*
+* THIS IS THE BANDGAP FALLBACK. If the switched-capacitor bandgap is
+* not settling cleanly across corners in time, drop it and use this.
+*
+* What you lose: first-order temperature independence.
+* What you keep: a start-up-safe, self-biased current that feeds
+* bias_gen, the clock doubler and both output buffers -- i.e. a
+* measurable, functional tile.
+*
+* I_out ~ (2/u_n Cox (W/L)_1) * (1/R^2) * (1 - 1/sqrt(K))^2
+* with K the width ratio between M1 and M2.
+*
+* The start-up branch is NOT optional. Without it the circuit has a
+* stable zero-current state and may never turn on. Simulate start-up
+* from VDD=0 with a slow ramp and confirm it reaches the operating
+* point in every corner.
+* ============================================================
+
+.subckt simple_ref iout_n iout_p VDD VSS
+
+.param wn   = 4
+.param l_n   = 2        $ NOT 'ln' -- that is ngspice's natural-log
+*                        function. A param named ln never evaluates, so
+*                        L arrives undefined, no model bin matches, and
+*                        ngspice reports "could not find a valid
+*                        modelname" -- which looks like a missing PDK.
+*                        Fixed 2026-11-14.
+.param kmul = 4          $ M2 is kmul times wider than M1
+.param wp   = 8
+.param lp   = 2
+.param rset = 100k       $ TODO: swap for a high-resistance poly device
+
+* ---- PMOS mirror (forces equal currents in both legs) ---------
+XMP1 na na VDD VDD sky130_fd_pr__pfet_01v8 L={lp} W={wp} nf=1 m=1
+XMP2 nb na VDD VDD sky130_fd_pr__pfet_01v8 L={lp} W={wp} nf=1 m=1
+
+* ---- NMOS beta-multiplier core --------------------------------
+XMN1 na nb VSS   VSS sky130_fd_pr__nfet_01v8 L={l_n} W={wn}        nf=1 m=1
+XMN2 nb nb nrs   VSS sky130_fd_pr__nfet_01v8 L={l_n} W={wn*kmul}   nf=1 m=1
+Rs   nrs VSS {rset}
+
+* ---- start-up branch (rev 2, 2026-11-14) ----------------------
+* REV 1 WAS WIRED BACKWARDS and is the reason this reference ran at
+* ~40 uA instead of ~1 uA. It sensed nb HIGH -- i.e. the core already
+* running -- and only then turned XMsu3 on, injecting into na and
+* pinning the PMOS mirror in heavy overdrive. At power-up, when nb is
+* low and help is actually needed, all three devices were off.
+* Measured evidence: nb = 1.738 V, nsu = 0.075 V, na = 0.234 V.
+*
+* Rev 2 is one long-channel PMOS. Source = na, gate = nb:
+*   core off -> nb = 0 and na floats above 1.0 V (XMP1 cannot hold na
+*               higher than VDD-|Vth| without current), so Vsg > |Vth|
+*               and this device pulls na DOWN, lighting the mirror.
+*   core on  -> na ~ 0.66 V, nb ~ 0.9 V, so Vsg < 0 and it is OFF.
+* It releases once nb passes (na - |Vth|), which happens well before
+* the final operating point, so it adds no standing current.
+XMsu  VSS nb na VDD sky130_fd_pr__pfet_01v8 L=8 W=1 nf=1 m=1
+
+* ---- outputs ---------------------------------------------------
+* iout_n: NMOS gate bias (mirror with an NMOS to sink current)
+* iout_p: PMOS gate bias (mirror with a PMOS to source current)
+XMon iout_n iout_n VSS VSS sky130_fd_pr__nfet_01v8 L={l_n} W={wn} nf=1 m=1
+XMop iout_n na     VDD VDD sky130_fd_pr__pfet_01v8 L={lp} W={wp} nf=1 m=1
+Vlink iout_p na 0
+
+.ends simple_ref

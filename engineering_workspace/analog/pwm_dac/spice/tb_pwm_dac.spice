@@ -1,0 +1,97 @@
+* ============================================================
+* tb_pwm_dac.spice -- ripple and DC linearity, REV 2 2026-11-14
+*
+* Rev 1 reported 1.382 mV ripple at 1.636 V and that was a LATCHED
+* out_buf, not a working DAC. Two things changed:
+*   1. out_buf's input pair was swapped (positive feedback) -- fixed
+*   2. bias comes from ideal_ref now, so a failure here is the DAC's
+*      and not the reference's
+*
+* USABLE OUTPUT WINDOW: 0.7 to 1.6 V.
+* out_buf has an NMOS input pair, so it cannot follow below about
+* 0.6-0.7 V. Decision of 2026-11-14 was to restrict the swing rather
+* than rebuild the input stage. The phase counter in pwm.v is 8 bits,
+* so duty codes 100..228 land inside the window:
+*     0.7 V -> 0.389 duty -> code 100
+*     1.6 V -> 0.889 duty -> code 228
+* That is 129 levels, 7.0 mV per step -- BETTER resolution than the
+* 28 mV the original 6-bit full-range spec gave. No RTL change is
+* needed; it is a usage constraint, and it belongs in the datasheet.
+* ============================================================
+
+.lib $PDK_ROOT/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+.include "../../out_buf/spice/out_buf.spice"
+.include "pwm_dac.spice"
+.include "../../bandgap/fallback/spice/ideal_ref.spice"
+
+Vdd VDD 0 1.8
+Vss VSS 0 0
+
+.param tper = 640n       $ 100 MHz / 64
+.param duty = 0.5        $ -> 0.9 V, inside the 0.7-1.6 V window
+
+Vpwm pwm_in 0 PULSE(0 1.8 0 200p 200p {tper*duty} {tper})
+
+* iset = 5u because out_buf's tail is W=4 L=1 (W/L = 4) while the
+* reference diode is W=4 L=2 (W/L = 2), so the tail mirrors 2x and
+* lands at 10 uA. At the 1 uA the block was tested with before, the
+* tail sat in weak inversion with almost no gm.
+* If ngspice rejects the instance-line override, edit ideal_ref's
+* own '.param iset' instead -- same effect.
+Xref nbias pbias VDD VSS ideal_ref iset=5u
+Xdac pwm_in vout nbias VDD VSS pwm_dac
+
+Rl vout 0 1meg
+Cl vout 0 5p
+
+.control
+* RUN LENGTH. The filter is an UNBUFFERED RC-RC ladder, so R2 loads
+* C1 and the sections interact:  H(s) = 1/(1 + 3sRC + s^2 (RC)^2).
+* Its slow time constant is 2.618*RC, NOT RC:
+*     c = 1p -> RC = 2 us  -> tau_slow =  5.24 us
+*     c = 2p -> RC = 4 us  -> tau_slow = 10.47 us
+* Rev 2 measured at 50-60 us, which is 9.5 tau at 1 pF (settled) but
+* only 4.8 tau at 2 pF -- leaving ~7 mV of settling that read as
+* ripple and dragged vavg down to 0.8946. 200 us is >19 tau at 2 pF.
+tran 2n 200u
+
+* WINDOW LENGTH. 640 ns PWM period, so a window must be an INTEGER
+* number of periods or the average is biased and the extremes get
+* clipped. Rev 2's 10 us window was 15.625 periods. 12.8 us is 20.
+*   window A: 160.0 .. 172.8 us
+*   window B: 180.0 .. 192.8 us
+
+echo ""
+echo "============================================================"
+echo "  1. STEADY STATE -- two windows 20 us apart must agree"
+echo "============================================================"
+meas tran vavg_a AVG v(vout) FROM=160u TO=172.8u
+meas tran vavg_b AVG v(vout) FROM=180u TO=192.8u
+let drift_mv = (vavg_b - vavg_a) * 1e3
+print vavg_a vavg_b drift_mv
+echo "  PASS: |drift_mv| under 0.1. If it is larger the output is"
+echo "  still settling and EVERY number below is meaningless --"
+echo "  lengthen the tran before reading anything else."
+
+echo ""
+echo "============================================================"
+echo "  2. RIPPLE at duty 0.5 (expect vavg near 0.9 V)"
+echo "============================================================"
+meas tran vmax MAX v(vout) FROM=180u TO=192.8u
+meas tran vmin MIN v(vout) FROM=180u TO=192.8u
+let ripple_mv = (vmax - vmin) * 1e3
+print vavg_b ripple_mv
+echo "  PASS: vavg_b within ~20 mV of 0.900, AND ripple_mv < 7.0"
+echo "  (7.0 mV is one LSB over the 0.7-1.6 V window at 8 bits.)"
+echo ""
+echo "  Attenuation of the PWM fundamental is (w*RC)^2 against a"
+echo "  2.292 Vpp fundamental, so expect:"
+echo "     c = 1p  ->  5.9 mVpp   (84 % of an LSB -- too thin once"
+echo "                             poly is +-20 % and MIM +-10 %)"
+echo "     c = 2p  ->  1.5 mVpp"
+echo ""
+echo "  Check WHERE vmax and vmin fall. Both at the window edges"
+echo "  means a ramp, not ripple -- see part 1."
+echo "============================================================"
+.endc
+.end

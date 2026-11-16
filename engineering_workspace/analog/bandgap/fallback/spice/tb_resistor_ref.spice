@@ -1,0 +1,70 @@
+* ============================================================
+* tb_resistor_ref.spice -- start-up, supply sensitivity, tempco
+*
+* resistor_ref replaced simple_ref on 2026-11-14 because the
+* beta-multiplier has two stable states and kept parking in the
+* dead one. This deck tests the claim that resistor_ref CANNOT do
+* that, and quantifies what was traded away for it.
+*
+* A plain DC supply plus 'uic' is the cold start: uic forces every
+* node to 0, so VDD arrives as a hard step at t=0.
+* ============================================================
+.lib $PDK_ROOT/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+.include "resistor_ref.spice"
+
+Vdd VDD 0 1.8
+Vss VSS 0 0
+
+Xref nbias pbias VDD VSS resistor_ref
+
+* Sense with a copy of bias_gen's unit device, so the number IS one
+* bias_gen LSB and is directly comparable to its 1.0499 uA step.
+XMsense nsen nbias VSS VSS sky130_fd_pr__nfet_01v8 L=2 W=4 nf=1 m=1
+Vsense  VDD nsen 0
+
+.control
+echo ""
+echo "============================================================"
+echo "  1. COLD START -- hard VDD step, all nodes forced to 0"
+echo "============================================================"
+tran 100n 200u uic
+meas tran i_1us   find i(Vsense) at=1u
+meas tran i_100us find i(Vsense) at=100u
+meas tran i_end   find i(Vsense) at=199u
+print i_1us i_100us i_end
+echo "  PASS: all three equal and near 1e-6. There is no start-up"
+echo "  circuit and no second operating point, so a difference here"
+echo "  means a convergence problem, not a latch."
+
+echo ""
+echo "============================================================"
+echo "  2. SUPPLY SENSITIVITY -- the price of dropping the"
+echo "     beta-multiplier"
+echo "============================================================"
+dc Vdd 1.5 2.1 0.05
+let i_sup = -i(Vsense)
+meas dc i_162 find i_sup at=1.62
+meas dc i_180 find i_sup at=1.80
+meas dc i_198 find i_sup at=1.98
+print i_162 i_180 i_198
+echo "  I = (VDD - Vgs)/rset, so dI/dVDD = 1/rset = 0.83 uA/V."
+echo "  Expect roughly +-15 % of I across VDD +-10 %. That is the"
+echo "  known cost. If you need better, that is the bandgap's job."
+
+echo ""
+echo "============================================================"
+echo "  3. TEMPCO"
+echo "============================================================"
+dc temp -40 125 5
+let i_t = -i(Vsense)
+meas dc i_m40 find i_t at=-40
+meas dc i_27  find i_t at=27
+meas dc i_125 find i_t at=125
+print i_m40 i_27 i_125
+echo "  Vgs falls ~2 mV/C, which RAISES I through (VDD-Vgs)/rset,"
+echo "  while the poly resistor's own coefficient works the other"
+echo "  way. Expect order 0.2 %/C net. Record it -- bias_gen trims"
+echo "  the absolute value but not the drift."
+echo "============================================================"
+.endc
+.end

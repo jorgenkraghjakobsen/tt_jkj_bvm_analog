@@ -1,0 +1,54 @@
+* ============================================================
+* tb_bias_gen.spice -- monotonicity sweep over all 32 trim codes
+*
+* A non-monotonic trimmed mirror is unusable: the trim search will
+* hunt and never settle. Sweep every code and confirm each step
+* increases the current.
+* ============================================================
+
+.lib $PDK_ROOT/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+.include "bias_gen.spice"
+.include "../../bandgap/fallback/spice/simple_ref.spice"
+
+Vdd VDD 0 1.8
+Vss VSS 0 0
+
+Xref  nbias pbias VDD VSS simple_ref
+Xbias nbias b0 b1 b2 b3 b4 en nout VDD VSS bias_gen
+
+Vb0 b0 0 0
+Vb1 b1 0 0
+Vb2 b2 0 0
+Vb3 b3 0 0
+Vb4 b4 0 0
+Ven en 0 1.8
+
+Vmeas VDD nout 0
+
+.control
+set color0=white
+echo " "
+echo " code    I_trim(uA)"
+
+let k = 0
+while k < 32
+  let b0v = (k % 2) * 1.8
+  let b1v = (floor(k/2)  % 2) * 1.8
+  let b2v = (floor(k/4)  % 2) * 1.8
+  let b3v = (floor(k/8)  % 2) * 1.8
+  let b4v = (floor(k/16) % 2) * 1.8
+  alter Vb0 dc = $&b0v
+  alter Vb1 dc = $&b1v
+  alter Vb2 dc = $&b2v
+  alter Vb3 dc = $&b3v
+  alter Vb4 dc = $&b4v
+  op
+  let itrim = -i(Vmeas) * 1e6
+  print k itrim
+  let k = k + 1
+end
+
+echo " "
+echo "Check: every step must increase. Target span 1 uA to 32 uA."
+.endc
+.end

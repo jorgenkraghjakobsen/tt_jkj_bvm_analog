@@ -1,0 +1,115 @@
+================================================================
+1. TRIM / TEMPERATURE COEFFICIENT   (C_A = C_F = 4u, C_B = 32 + code)
+================================================================
+code  C_B(u)   VREF@27C   TC ppm/C
+   0      32    1.1523V     299.1
+   1      33    1.1659V     256.4
+   2      34    1.1796V     214.6
+   3      35    1.1932V     173.8
+   4      36    1.2068V     134.0
+   5      37    1.2205V      95.0
+   6      38    1.2341V      56.9
+   7      39    1.2477V      20.7
+   8      40    1.2614V      18.3  <- best
+   9      41    1.2750V      52.6
+  10      42    1.2886V      87.6
+  11      43    1.3023V     121.8
+  12      44    1.3159V     155.3
+  13      45    1.3296V     188.1
+  14      46    1.3432V     220.2
+  15      47    1.3568V     251.7
+
+  slope change per code ~ 34 ppm/C
+  dVBE/dT  at 27 C = -1.80 mV/K
+  dDVBE/dT at 27 C = +0.183 mV/K  (N=8)
+  ideal C_B/C_A    = 9.81  -> code 7.2
+  DVBE at 27 C     = 54.5 mV
+
+================================================================
+2. OTA REQUIREMENT  (this is the number that matters)
+================================================================
+  C_A = C_F = 200 fF   C_B = 2000 fF   Cp = 150 fF
+  feedback factor beta = 0.0784  (1/12.7)
+  settling error budget 0.5 mV on 1.2416 V -> eps = 4.03e-04
+  required DC gain     = 31661  = 90.0 dB
+  slot 5.12 us, settle window 2.56 us, N_tau = 7.8
+  required GBW = 6.20 MHz
+  Cc ~ 750 fF -> gm1 = 29.2 uS
+    gm/ID = 10  ->  ID = 2.92 uA   OTA total ~ 11.68 uA
+    gm/ID = 15  ->  ID = 1.95 uA   OTA total ~ 7.79 uA
+    gm/ID = 20  ->  ID = 1.46 uA   OTA total ~ 5.84 uA
+
+  --- what the Rev19 OTA actually delivers ---
+  Rev19 is L=0.5 um everywhere on a 2 uA tail.
+    gm*ro =  30 per stage -> two-stage gain  59.1 dB   static error   17.59 mV
+    gm*ro =  50 per stage -> two-stage gain  68.0 dB   static error    6.33 mV
+    gm*ro = 100 per stage -> two-stage gain  80.0 dB   static error    1.58 mV
+  Budget is 0.5 mV. Measure the real gain with .ac before redesigning.
+
+================================================================
+3. AREA  (does this fit a 1x2 tile?)
+================================================================
+  1x2 tile               36000 um^2  (160 x 225)
+  MIM array 10x10         3844 um^2  (62 x 62)
+  bandgap block           7200 um^2  (80 x 90 budget) = 20% of tile
+  + dig_top  10000 um^2 + ~4000 other ->  21200 um^2 =  59% of 1x2   FITS (tight)
+  + dig_top  15000 um^2 + ~4000 other ->  26200 um^2 =  73% of 1x2   DOES NOT FIT
+  + dig_top  20000 um^2 + ~4000 other ->  31200 um^2 =  87% of 1x2   DOES NOT FIT
+
+================================================================
+4. CURRENT BUDGET  (option D, I = 0.5 uA)
+================================================================
+  mirror units 9 x I          = 4.5 uA   (burst budget is 4 uA)
+  -> the 8 extra units MUST be gated by ota_en, or burst mode is over budget
+  continuous: core 3 + OTA 10 = 13 uA  (spec <= 15 uA)
+  emitter settling tau = (VT/I)*C_B = 103 ns -> 7tau = 0.72 us of a 5.12 us slot
+==============================================================
+MIM ARRAY -- generated common-centroid placement
+==============================================================
+
+        0   1   2   3   4   5   6   7
+     +--------------------------------
+  0  |  d   B   B   B   B   B   B   d
+  1  |  d   B   B  T4  T4   B   B   d
+  2  |  B   B  T8   F   F  T8   B   B
+  3  |  B  T2  T8   A   A  T8  T1   B
+  4  |  B   d  T8   A   A  T8  T2   B
+  5  |  B   B  T8   F   F  T8   B   B
+  6  |  d   B   B  T4  T4   B   B   d
+  7  |  d   B   B   B   B   B   B   d
+
+  (a full dummy ring surrounds this 8x8 core -> 10x10 = 100 units)
+
+--------------------------------------------------------------
+ group  units    centroid offset (pitch)
+--------------------------------------------------------------
+     A      4      dr=+0.0000  dc=+0.0000   exact
+     F      4      dr=+0.0000  dc=+0.0000   exact
+    T8      8      dr=+0.0000  dc=+0.0000   exact
+    T4      4      dr=+0.0000  dc=+0.0000   exact
+    T2      2      dr=+0.0000  dc=+0.0000   exact
+    T1      1      dr=-0.5000  dc=+2.5000   OFFSET  <- odd count (1 units)
+     B     32      dr=+0.0000  dc=+0.0000   exact
+     d      9      dr=+0.0556  dc=-0.2778   OFFSET  <- odd count (9 units)
+--------------------------------------------------------------
+  core cells used: 64/64   ring dummies: 36   total: 100
+
+==============================================================
+GRADIENT SENSITIVITY  (guide's defaults: 0.50 %/array x, 0.30 %/array y)
+==============================================================
+  C_A error     +0.0 ppm
+  C_F error     +0.0 ppm
+  C_B error     +0.0 ppm   (base + trim8, 40 units, code 8)
+
+  VREF shift from the gradient ~ +0.000 mV
+  (compare: naive row-by-row placement gives tens of mV here)
+
+==============================================================
+RANDOM MISMATCH  (A_C = 1.0 %*um assumed -- sky130 publishes none)
+==============================================================
+  unit 5.0 x 5.0 um -> sigma(C)/C per unit = 0.200 %
+   C_A ( 4 units) sigma = 0.100 %
+   C_F ( 4 units) sigma = 0.100 %
+   C_B (40 units) sigma = 0.032 %
+
+  sigma(VREF) = 1.45 mV   (guide's painter reports ~1.11 mV)

@@ -1,0 +1,40 @@
+* ============================================================
+* ideal_ref.spice -- drop-in replacement for simple_ref in TEST
+* HARNESSES ONLY. Never instantiate this in the tapeout netlist.
+*
+* WHY THIS EXISTS
+* Every block testbench was biasing from simple_ref, so when the
+* reference ran 40x high (inverted start-up branch, fixed 2026-11-14)
+* out_buf, pwm_dac and clk_doubler were all characterised at 40x
+* their design current and looked better than they are.
+*
+* A block's spec is defined AT a bias current. Testing it through a
+* real reference measures the block and the reference at once, and
+* you cannot tell which one failed. This gives each block exactly
+* its specified bias so a failure is unambiguous.
+*
+* Same ports as simple_ref, so swapping is a one-word edit:
+*     Xref nbias pbias VDD VSS simple_ref
+*     Xref nbias pbias VDD VSS ideal_ref
+*
+* Device sizes are NOT arbitrary -- they mirror the real consumers:
+*   XMN  nfet L=2 W=4  == bias_gen's unit device, so iout_n is
+*                         precisely one bias_gen LSB of gate drive
+*   XMP  pfet L=2 W=8  == simple_ref's XMP1/XMP2 mirror leg
+* Change a consumer's unit size and you must change it here too.
+* ============================================================
+
+.subckt ideal_ref iout_n iout_p VDD VSS
+
+.param iset = 1u        $ the design current. Override per deck:
+*                         Xref nbias pbias VDD VSS ideal_ref iset=500n
+
+* ---- NMOS gate bias: diode-connected unit device at iset --------
+IN  VDD iout_n {iset}
+XMN iout_n iout_n VSS VSS sky130_fd_pr__nfet_01v8 L=2 W=4 nf=1 m=1
+
+* ---- PMOS gate bias: diode-connected mirror leg at iset ---------
+IP  iout_p VSS {iset}
+XMP iout_p iout_p VDD VDD sky130_fd_pr__pfet_01v8 L=2 W=8 nf=1 m=1
+
+.ends ideal_ref

@@ -1,0 +1,205 @@
+* ============================================================
+* tb_sc_ideal.spice -- SC bandgap core with IDEAL switches and OTA
+*
+* This is the Step 1 / Step 3 acceptance test:
+*   "Ideal-component SC testbench (switches = ideal, OTA = VCVS)
+*    reproduces the equation within 1 mV."
+*
+* Run this BEFORE drawing a single transistor. If the topology and the
+* phase timing are right, VREF lands on
+*
+*     VREF = (C_A*VBE(8I) + C_B*DVBE) / C_F
+*
+* The real sky130 PNP is used, so VBE is real. Everything else is ideal,
+* which isolates topology errors from device errors.
+*
+* TOPOLOGY (option D -- one time-shared PNP)
+*   C_A bottom: V_E in phi1 (S1), ground in phi2 (S2)
+*   C_B bottom: wired straight to the emitter in both phases
+*   C_F far:    ground in phi1 (S5), V_OUT in phi2 (S6)
+*   S7:         X to OTA output during phi1 (auto-zero)
+*   S8:         capture to C_H, opening before phi2 ends
+* ============================================================
+
+.lib $PDK_ROOT/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+
+* ---- capacitor array, in units ---------------------------------
+.param Cu    = 50f
+.param nA    = 4
+.param nF    = 4
+.param code  = 8
+.param nB    = '32 + code'   $ base 32: see BANDGAP_NOTES.md sec 7
+.param CA    = 'nA*Cu'
+.param CB    = 'nB*Cu'
+.param CF    = 'nF*Cu'
+.param Cp    = 150f        $ parasitic at node X
+.param CH    = 1p
+
+* ---- OTA model -------------------------------------------------
+.param AOL   = 34144       $ 90.7 dB -- the requirement, see doc/
+.param VOS   = 5m
+.param VCM   = 0.9
+
+* ---- currents (option D: 8I in phi1, I in phi2) ----------------
+.param I1    = 0.5u
+.param I8    = '8*I1'
+
+* ---- phase timing, div_sel = 4 ---------------------------------
+.param tslot = 5.12u
+.param tdead = 40n
+.param tclk  = 20n
+
+Vdd VDD 0 1.8
+Vss VSS 0 0
+Vcm vcm 0 {VCM}
+
+* ---- phases ----------------------------------------------------
+* phi1: inner part of slot 1.  phi2: inner part of slot 2.
+Vphi1 phi1 0 PULSE(0 1.8 {tdead} 1n 1n '{tslot}-2*{tdead}' '2*{tslot}')
+Vphi2 phi2 0 PULSE(0 1.8 '{tslot}+{tdead}' 1n 1n '{tslot}-2*{tdead}' '2*{tslot}')
+* i8_en spans the whole phi1 slot, so the current changes in dead time.
+* i8enb is its complement, generated as a second PULSE rather than a
+* behavioural inverter -- see the steering note at Iextra.
+Vi8   i8en  0 PULSE(0 1.8 0 1n 1n {tslot} '2*{tslot}')
+Vi8b  i8enb 0 PULSE(1.8 0 0 1n 1n {tslot} '2*{tslot}')
+* cap closes briefly and opens 2 clocks before phi2 ends (bg_seq rev2)
+Vcap  capx 0 PULSE(0 1.8 '2*{tslot}-{tdead}-3*{tclk}' 1n 1n {tclk} '2*{tslot}')
+
+.model SWI sw vt=0.9 vh=0.05 ron=1 roff=1e12
+
+* ---- PNP, emitter current switched 8I / I ----------------------
+*
+* A behavioural source, not a switched one: putting a switch in series
+* with a current source leaves the source's far node floating when the
+* switch opens, and putting it in parallel shorts the emitter. One
+* B-source that changes value on i8en avoids both.
+* CURRENT STEERING, not a behavioural source.
+*
+* A B-source written as {I1} + {I8-I1}*(V(i8en) > 0.9) does NOT work
+* under ngbehavior=hsa: HSPICE compatibility mode parses the boolean
+* differently and it evaluates to 0 throughout, so the emitter never
+* sees 8I and dVBE comes out near zero.
+*
+* Steering is also what the design guide specifies: the extra 7 units
+* either go to the emitter (phi1) or are dumped to ground (phi2). The
+* source is never left open, so its node always has a defined voltage
+* and the mirror gate never sees a step.
+Ibase  VSS ve  {I1}
+Iextra VSS nx8 '{I8}-{I1}'
+S8a nx8 ve  i8en  0 SWI
+S8b nx8 VSS i8enb 0 SWI
+
+* The sky130 substrate PNP is a .subckt, so an X element:
+*   .subckt  sky130_fd_pr__pnp_05v5_W3p40L3p40 Collector Base Emitter
+* (note the TWO spaces after .subckt -- a single-space grep misses it).
+* Port order is Collector Base Emitter, so the emitter goes LAST.
+* Collector and base are both the p-substrate, i.e. VSS, which is why
+* this device is only ever used diode-connected.
+* sky130.lib.spice already loads the model; do not .include it again.
+XQ1 VSS VSS ve sky130_fd_pr__pnp_05v5_W3p40L3p40
+
+* ---- capacitor array -------------------------------------------
+* C_A bottom plate switched between V_E and ground
+S1 ve  ca_b phi1 0 SWI
+S2 0   ca_b phi2 0 SWI
+CAc ca_b x {CA}
+
+* C_B bottom plate hard-wired to the emitter (option D)
+CBc ve x {CB}
+
+* C_F far plate: ground in phi1, output in phi2
+S5 0    cf_b phi1 0 SWI
+S6 nout cf_b phi2 0 SWI
+CFc cf_b x {CF}
+
+Cpar x 0 {Cp}
+* Node X only ever touches capacitors and open switches. The switch
+* model's roff gives it a nominal DC path, but an explicit bleed stops
+* the operating point falling back on source stepping.
+Rxbleed x 0 1T
+
+* ---- OTA as a limited VCVS, inverting input at X ---------------
+Bota nout 0 V = min(1.75, max(0.05, {AOL}*(V(vcm) + {VOS} - V(x))))
+
+* auto-zero: X shorted to the output during phi1
+S7 x nout phi1 0 SWI
+
+* ---- capture onto the hold capacitor ---------------------------
+S8 nout vref capx 0 SWI
+CHc vref 0 {CH}
+
+.control
+set color0=white
+
+* NOTE: a .control block does NOT do {} parameter substitution -- that
+* is netlist syntax only. Values needed by commands are defined here as
+* vectors and expanded with $& .
+let tslot  = 5.12e-6
+let tstop  = 16*tslot
+let tmeas  = 15.5*tslot
+let t8i    = 0.9*tslot
+let t1i    = 1.9*tslot
+
+* capacitor values in farads, matching the .param block above
+let CAv = 200e-15
+let CBv = 2200e-15
+let CFv = 200e-15
+
+echo " "
+echo "--- operating point sanity check ---"
+op
+print v(ve)
+echo "V(ve) must be near 0.65 V. If it is ~0 V the PNP port order is"
+echo "wrong -- see the comment above XQ1."
+
+echo " "
+echo "--- 8 frames ---"
+tran 20n $&tstop
+
+* Measurements come BEFORE any plot, so the numbers still print if the
+* display is unavailable (batch run, no X).
+echo " "
+echo "--- measured VREF after settling ---"
+meas tran vref_f FIND v(vref) AT=$&tmeas
+meas tran ve_8i  FIND v(ve)   AT=$&t8i
+meas tran ve_1i  FIND v(ve)   AT=$&t1i
+
+let dvbe_meas  = ve_8i - ve_1i
+let dvbe_mv    = dvbe_meas*1e3
+let vref_ideal = (CAv*ve_8i + CBv*dvbe_meas)/CFv
+let err_mv     = (vref_f - vref_ideal)*1e3
+
+print ve_8i
+print ve_1i
+print dvbe_mv
+print vref_ideal
+print vref_f
+print err_mv
+
+echo " "
+echo "ACCEPTANCE -- BOTH must hold:"
+echo " "
+echo "  1. dvbe_mv must be near +53.8 mV  (VT*ln(8) at 27 C)."
+echo "     This is the FIRST thing to check. If dvbe_mv is small or"
+echo "     negative, the 8I/I steering is not working and err_mv below"
+echo "     is meaningless -- it compares the circuit against the same"
+echo "     broken measurement, so both sides are wrong together."
+echo " "
+echo "  2. err_mv must be under 1 mV."
+echo " "
+echo "Only when 1 holds does 2 mean anything."
+
+* a record of the run, viewable later without re-simulating
+wrdata sc_ideal_trace.csv v(phi1) v(phi2) v(capx) v(ve) v(nout) v(vref)
+echo " "
+echo "trace written to sc_ideal_trace.csv"
+
+echo " "
+echo "--- offset rejection: auto-zero should null VOS ---"
+echo "Re-run with .param VOS = -5m and +10m. VREF must move by under 1 mV."
+
+plot v(phi1) v(phi2) v(capx)
+plot v(ve)
+plot v(vref) v(nout)
+.endc
+.end

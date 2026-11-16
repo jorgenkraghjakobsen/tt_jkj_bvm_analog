@@ -1,0 +1,9 @@
+obj/*
+!obj/.gitkeep
+*.vcd
+*.raw
+__pycache__/
+sim_build/
+results.xml
+corner_results/
+runs/

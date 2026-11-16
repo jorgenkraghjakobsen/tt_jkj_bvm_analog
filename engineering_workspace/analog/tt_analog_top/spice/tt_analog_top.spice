@@ -1,0 +1,83 @@
+* ============================================================
+* tt_analog_top.spice -- tile-level schematic netlist
+*
+* This is the LVS reference for the whole tile: it instances every
+* analog block and blackboxes the hardened digital macro.
+*
+* It is NOT simulatable as-is -- dig_top is a digital macro, so there
+* is no transistor model for it here. Its purpose is to be the
+* schematic side of
+*
+*   netgen -batch lvs "tt_analog_top_lvs.spice tt_analog_top" \
+*                     "tt_analog_top.spice tt_analog_top" ...
+*
+* For a mixed-signal transient, replace the Xdig line with PWL sources
+* driving phi1/phi2/cap/i8_en/ota_en from a cocotb VCD dump.
+* ============================================================
+
+.include "../../bandgap/spice/sc_ota.spice"
+.include "../../out_buf/spice/out_buf.spice"
+.include "../../bias_gen/spice/bias_gen.spice"
+.include "../../clk_doubler/spice/clk_doubler.spice"
+.include "../../pwm_dac/spice/pwm_dac.spice"
+.include "../../bandgap/fallback/spice/simple_ref.spice"
+
+.subckt tt_analog_top
++ ua0 ua1 ua2
++ clk ena rst_n
++ uio0 uio1 uio2 uio3
++ uo0 uo1
++ VDPWR VGND
+
+* ---- digital macro (blackbox for LVS) --------------------------
+Xdig
++ clk rst_n ena
++ uio0 uio3 uio1 uio2
++ bias_ok
++ clk_pwm0 clk_pwm1
++ uo0 uo1
++ bg_en bg_trim3 bg_trim2 bg_trim1 bg_trim0
++ bias_en bias_trim4 bias_trim3 bias_trim2 bias_trim1 bias_trim0
++ dbl_en
++ pwm0_clk_sel pwm1_clk_sel
++ phi1 phi2 cap ota_en i8_en
++ bg_valid bg_ok
++ dig_top
+
+* ---- reference -------------------------------------------------
+* Xbg vref bias_ok phi1 phi2 cap ota_en i8_en bg_en
+* +   bg_trim3 bg_trim2 bg_trim1 bg_trim0 VDPWR VGND sc_bandgap
+* TODO: instance once sc_bandgap.spice exists. Until then the
+* fallback below keeps the rest of the chain netlistable.
+Xref nbias_n nbias_p VDPWR VGND simple_ref
+Vref_stub vref 0 1.24
+
+* ---- bias generator --------------------------------------------
+Xbias nbias_n
++     bias_trim0 bias_trim1 bias_trim2 bias_trim3 bias_trim4
++     bias_en ibias VDPWR VGND bias_gen
+
+* ---- reference buffer to ua[0] ---------------------------------
+Xbuf0 vref ua0 nbias_n VDPWR VGND out_buf
+
+* ---- bias monitor on ua[1] -------------------------------------
+Rmon ibias ua1 0
+
+* ---- clock doubler ---------------------------------------------
+Xdbl clk clk2x dbl_en nbias_n VDPWR VGND clk_doubler
+
+* ---- PWM clock muxes -------------------------------------------
+* Drawn as behavioural switches; replace with real TG muxes in the
+* schematic, or move the mux into dig_top and delete these.
+.model SWI sw vt=0.9 vh=0.05 ron=1 roff=1e12
+Smux0a clk   clk_pwm0 pwm0_clk_sel_n 0 SWI
+Smux0b clk2x clk_pwm0 pwm0_clk_sel   0 SWI
+Smux1a clk   clk_pwm1 pwm1_clk_sel_n 0 SWI
+Smux1b clk2x clk_pwm1 pwm1_clk_sel   0 SWI
+Binv0 pwm0_clk_sel_n 0 V = 1.8 - V(pwm0_clk_sel)
+Binv1 pwm1_clk_sel_n 0 V = 1.8 - V(pwm1_clk_sel)
+
+* ---- PWM DAC to ua[2] ------------------------------------------
+Xdac uo0 ua2 nbias_n VDPWR VGND pwm_dac
+
+.ends tt_analog_top

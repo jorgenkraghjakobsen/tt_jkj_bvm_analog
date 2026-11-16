@@ -1,0 +1,58 @@
+* ============================================================
+* resistor_ref.spice -- supply-referenced current reference
+*
+* THIS IS THE BANDGAP FALLBACK (replaces simple_ref, 2026-11-14).
+*
+* WHY NOT THE BETA-MULTIPLIER
+* simple_ref was a constant-gm beta-multiplier. That topology has
+* TWO stable operating points -- the intended one and zero current --
+* and needs a start-up circuit to break the tie. Rev 1's start-up was
+* wired backwards and pinned it at 40x target; rev 2's was too weak
+* and left it parked at 0.55 nA with both core devices in
+* subthreshold (na = 1.121, nb = 0.221). Getting that handoff right
+* is the fiddliest part of the circuit and it is not where the time
+* should go on a fallback.
+*
+*     I = (VDD - Vgs(XMN)) / rset
+*
+* ONE operating point. No start-up circuit, nothing to latch, cannot
+* fail to come up. You give up what the beta-multiplier was for:
+*
+*   SUPPLY REJECTION  dI/dVDD = 1/rset, so a 10 % supply step moves
+*                     I by about 15 %.
+*   TEMPCO            Vgs drifts ~-2 mV/C and the poly resistor has
+*                     its own coefficient; expect order 0.2 %/C.
+*
+* Both are acceptable here because this reference exists only to make
+* the tile measurable if the SC bandgap does not settle, and because
+* bias_gen trims the absolute value downstream anyway. If you need
+* temperature independence, that is the bandgap's job -- which is
+* precisely why the bandgap is the primary.
+* ============================================================
+
+.subckt resistor_ref iout_n iout_p VDD VSS
+
+* 1.2 M against Vgs = 0.599 V (measured for 1 uA in nfet W=4 L=2)
+* gives (1.8 - 0.599)/1.2M = 1.0 uA.
+.param rset = 1.2meg
+
+* TODO before layout: this must become sky130_fd_pr__res_high_po_*
+* so the extracted netlist matches. At roughly 2 k/square that is
+* ~600 squares, serpentined -- budget for it alongside the DAC's
+* two 2 M resistors.
+Rset VDD iout_n {rset}
+
+* ---- NMOS gate bias --------------------------------------------
+* Diode-connected, and deliberately the SAME device as bias_gen's
+* unit (nfet W=4 L=2) so iout_n is exactly one bias_gen LSB of gate
+* drive. Change bias_gen's unit and you must change this.
+XMN iout_n iout_n VSS VSS sky130_fd_pr__nfet_01v8 L=2 W=4 nf=1 m=1
+
+* ---- PMOS gate bias --------------------------------------------
+* Mirror the same current into a diode-connected PMOS leg, sized to
+* match simple_ref's old XMP1/XMP2 so downstream consumers see the
+* gate voltage they expect.
+XMNm iout_p iout_n VSS VSS sky130_fd_pr__nfet_01v8 L=2 W=4 nf=1 m=1
+XMP  iout_p iout_p VDD VDD sky130_fd_pr__pfet_01v8 L=2 W=8 nf=1 m=1
+
+.ends resistor_ref

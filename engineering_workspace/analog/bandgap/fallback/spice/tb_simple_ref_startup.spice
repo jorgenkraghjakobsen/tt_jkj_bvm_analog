@@ -1,0 +1,58 @@
+* ============================================================
+* tb_simple_ref_startup.spice
+*
+* The one test that catches an inverted start-up branch. A plain
+* .op will happily report a wrong-but-self-consistent operating
+* point; only ramping VDD from zero shows whether the loop lights
+* up and stays lit. simple_ref's own header demanded this test and
+* it had never been run -- which is how rev 1 shipped backwards.
+*
+* Run it in tt, then ss and ff, before trusting this reference.
+* ============================================================
+.lib $PDK_ROOT/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+.include "simple_ref.spice"
+
+* Slow ramp, then a long hold so any drift shows up.
+Vdd VDD 0 PWL(0 0 200u 1.8 2m 1.8)
+Vss VSS 0 0
+
+Xref nbias pbias VDD VSS simple_ref
+
+* Sense with a copy of bias_gen's unit device, so the printed
+* number IS one bias_gen LSB -- directly comparable to the 1 uA
+* target and to the 39.6 uA that rev 1 produced.
+XMsense nsen nbias VSS VSS sky130_fd_pr__nfet_01v8 L=2 W=4 nf=1 m=1
+Vsense  VDD nsen 0
+
+.control
+* If this fails to converge, drop 'uic' -- the ramp alone is usually
+* enough of a cold start.
+tran 500n 2m uic
+
+meas tran i_early find i(Vsense) at=0.5m
+meas tran i_mid   find i(Vsense) at=1.0m
+meas tran i_end   find i(Vsense) at=1.9m
+meas tran v_na    find v(xref.na) at=1.9m
+meas tran v_nb    find v(xref.nb) at=1.9m
+
+echo ""
+echo "============================================================"
+echo "  simple_ref START-UP CHECK   (sign is a convention, read"
+echo "  the magnitude -- one bias_gen LSB, amps)"
+echo "============================================================"
+print i_early i_mid i_end
+print v_na v_nb
+echo ""
+echo "  PASS requires ALL FOUR:"
+echo "    1. |i_end| is not ~0        -> it started at all"
+echo "    2. |i_end| == |i_mid|       -> settled, not drifting"
+echo "    3. |i_end| near 1e-6        -> right magnitude, 1 uA target"
+echo "    4. v_nb well below 1.8      -> loop not collapsed to the"
+echo "                                   rail the way rev 1 did"
+echo ""
+echo "  Rev 1 failed 3 and 4: 39.6e-6 A with v_nb = 1.738."
+echo "  If 1 and 2 pass but 3 is low, rset is the knob -- hand"
+echo "  calculation puts 1 uA near 45k, not the present 100k."
+echo "============================================================"
+.endc
+.end

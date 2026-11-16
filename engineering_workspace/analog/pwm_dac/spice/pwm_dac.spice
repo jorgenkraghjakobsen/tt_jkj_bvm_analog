@@ -1,0 +1,49 @@
+* ============================================================
+* pwm_dac.spice -- two-stage RC low-pass + unity-gain buffer
+*
+* Driven by PWM 0, output to ua[2].
+*
+* Why two stages: a second pole cuts ripple by (fc/fpwm)^2 instead of
+* fc/fpwm, which is what makes capacitors small enough to fit the tile.
+*
+* Sizing from the project's own filter table (6-bit at 100 MHz, the
+* clock-doubled case): 1.56 MHz PWM rate, ~2 Mohm and ~1 pF per stage,
+* ~1.5 mVpp ripple against a 28 mV LSB, ~1000 um^2 of capacitor.
+*
+* That is the configuration to build. The 8-bit/50 MHz option in the
+* same table needs ~10 pF per stage -- about 28 % of a 1x2 tile -- and
+* does not fit alongside everything else.
+*
+* Layout notes:
+*   R  high-resistance poly, ~2 kohm/square -> 2 Mohm is ~1000 squares.
+*      Serpentine it, keep it under a guard ring, and keep the PWM
+*      input well away from the second-stage node.
+*   C  cap_mim_m3_1, ~2 fF/um^2.
+*   The second stage node is high impedance -- any leakage or coupling
+*   there is a DC error straight on ua[2].
+* ============================================================
+
+* REQUIRES: out_buf.spice must be included BEFORE this file.
+* It is deliberately not included here -- a .subckt library file that
+* includes its siblings causes duplicate .subckt errors when the top
+* deck includes both. The caller owns include order.
+*   .include "../../out_buf/spice/out_buf.spice"
+*   .include "pwm_dac.spice"
+
+.subckt pwm_dac pwm_in vout vbias_n VDD VSS
+
+.param r1 = 2meg
+.param c1 = 1p
+.param r2 = 2meg
+.param c2 = 1p
+
+* TODO before layout: replace with sky130_fd_pr__res_high_po_* and
+* sky130_fd_pr__cap_mim_m3_1 so the extracted netlist matches.
+R1 pwm_in nf1 {r1}
+C1 nf1    VSS {c1}
+R2 nf1    nf2 {r2}
+C2 nf2    VSS {c2}
+
+Xbuf nf2 vout vbias_n VDD VSS out_buf
+
+.ends pwm_dac

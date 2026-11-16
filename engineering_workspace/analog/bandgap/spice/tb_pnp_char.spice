@@ -1,0 +1,109 @@
+* ============================================================
+* tb_pnp_char.spice -- characterise the sky130 substrate PNP
+*
+* Step 1 week-1 task: "VBE1, VBE2 swept -40..125 C in ngspice at
+* 0.5, 1, 2 uA; slope at 27 C written down."
+*
+* The device is a .subckt with ports Collector Base Emitter, so the
+* emitter goes LAST on the X line. Its collector is
+* the p-substrate, so it is permanently diode-connected to ground.
+* Base and collector both go to VSS; only the emitter is a terminal.
+*
+* What to extract:
+*   dVBE/dT at 27 C      textbook value about -2.0 mV/K
+*   dDVBE/dT (N=8)       textbook value about +0.18 mV/K
+*   C_B/C_A = -(dVBE/dT)/(dDVBE/dT)
+* Replace the textbook numbers in scripts/trim_analysis.py with these.
+* ============================================================
+
+.lib $PDK_ROOT/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+
+Vss VSS 0 0
+
+* Emitter driven by a current source; base and collector to substrate.
+Ie1 VSS ve1 {I1}
+XQ1 VSS VSS ve1 sky130_fd_pr__pnp_05v5_W3p40L3p40
+
+Ie2 VSS ve2 {I2}
+XQ2 VSS VSS ve2 sky130_fd_pr__pnp_05v5_W3p40L3p40
+
+.param I1 = 0.5u
+.param I2 = 4u          $ 8 x I1 -- the N=8 ratio
+
+.control
+set color0=white
+
+* A TEMPERATURE SWEEP, not repeated .op calls.
+*
+* Each op in ngspice creates a NEW plot, so "let v26 = v(ve1)" after
+* one op and "let v28 = ..." after the next end up in different plots
+* and cannot be differenced -- every slope came back empty. One
+* "dc temp" sweep puts the whole curve in a single plot instead.
+*
+* Q1 runs at I1, Q2 at 8*I1, both in the circuit at once, so dVBE is
+* just v(ve2) - v(ve1) at every temperature.
+
+dc temp -40 125 1
+
+let vbe1  = v(ve1)
+let vbe2  = v(ve2)
+let dvbe  = vbe2 - vbe1
+
+echo " "
+echo "--- VBE and dVBE over temperature ---"
+meas dc vbe1_27 FIND v(ve1) AT=27
+meas dc vbe2_27 FIND v(ve2) AT=27
+meas dc dv_27   FIND dvbe   AT=27
+
+* central difference about 27 C
+meas dc vbe1_m FIND v(ve1) AT=26
+meas dc vbe1_p FIND v(ve1) AT=28
+meas dc vbe2_m FIND v(ve2) AT=26
+meas dc vbe2_p FIND v(ve2) AT=28
+meas dc dv_m   FIND dvbe   AT=26
+meas dc dv_p   FIND dvbe   AT=28
+
+let dvbe1_dt = (vbe1_p - vbe1_m)/2*1e3
+let dvbe8_dt = (vbe2_p - vbe2_m)/2*1e3
+let ddvbe_dt = (dv_p  - dv_m )/2*1e3
+
+echo " "
+echo "at 27 C:"
+print vbe1_27
+print vbe2_27
+print dv_27
+
+echo " "
+echo "slopes (mV/K):"
+print dvbe1_dt
+print dvbe8_dt
+print ddvbe_dt
+
+echo " "
+echo "--- the ratio the capacitor array has to realise ---"
+echo "Option D samples VBE at 8I, so the 8I slope is the one that counts."
+
+let ratio_8i = -dvbe8_dt / ddvbe_dt
+let ratio_1i = -dvbe1_dt / ddvbe_dt
+let code_8i  = 4*ratio_8i - 32      $ C_B base 32
+let code_1i  = 4*ratio_1i - 32
+
+print ratio_8i
+print code_8i
+print ratio_1i
+print code_1i
+
+echo " "
+echo "code_8i is the ideal bg_trim for option D with C_A = 4 units"
+echo "and C_B = 32 + code. It must land comfortably inside 0..15 --"
+echo "near 8 ideally, so process spread cannot run off either end."
+echo "If it sits near 0 or 15, change the C_B BASE (32) to recentre."
+
+wrdata pnp_vbe_vs_temp.csv vbe1 vbe2 dvbe
+echo " "
+echo "curves written to pnp_vbe_vs_temp.csv"
+
+plot vbe1 vbe2
+plot dvbe
+.endc
+.end

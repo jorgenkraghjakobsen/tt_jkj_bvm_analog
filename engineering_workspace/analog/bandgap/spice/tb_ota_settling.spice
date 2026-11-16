@@ -1,0 +1,120 @@
+* ============================================================
+* tb_ota_settling.spice -- THE acceptance test for the OTA
+*
+* Phase margin is a proxy. The requirement is: does the output settle
+* to within 0.5 mV of its final value before the bg_seq slot ends?
+* That is what this measures, in the actual phi2 charge-transfer
+* configuration, with the real feedback factor.
+*
+* A 43 deg phase margin rings; the question is whether the ringing has
+* decayed inside 5.12 us, not whether 43 is less than 60.
+*
+* CONFIGURATION (phi2, the transfer phase)
+*   C_F   from vout back to node X        200 fF  (4 units)
+*   C_in  from X to the stepped plate    2200 fF  (C_A 200 + C_B 2000)
+*   Cp    at X                            150 fF
+*   beta = C_F/(C_F + C_in + Cp) = 0.078
+*
+* The step emulates the bottom plates moving between phi1 and phi2.
+* -30 mV in gives +330 mV out (C_in/C_F = 11), which is the real swing
+* from the 0.9 V auto-zero level up to VREF near 1.23 V.
+* ============================================================
+
+.lib $PDK_ROOT/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+.include "sc_ota.spice"
+
+.param VCM   = 0.9
+.param CF    = 200f
+.param CIN   = 2200f
+.param CP    = 150f
+.param CL    = 1.5p
+* Negative, so vout RISES from the auto-zero level toward VREF, which
+* is the direction the real transfer goes.
+.param VSTEP = -30m
+.param TSTEP = 1u
+.param TSLOT = 5.12u
+
+Vdd VDD 0 1.8
+Vss VSS 0 0
+Ven ota_en 0 1.8
+Vcm vcm 0 {VCM}
+
+Ib VDD nbias 2u
+XMb nbias nbias VSS VSS sky130_fd_pr__nfet_01v8 L=4 W=16 nf=1 m=1
+
+* ---- phi2 charge-transfer network ----------------------------
+Vstep nstep 0 PWL(0 0 {TSTEP} 0 '{TSTEP}+1n' {VSTEP} 40u {VSTEP})
+Cin  nstep nx {CIN}
+Cf   vout  nx {CF}
+Cpar nx    0  {CP}
+
+* DC path for node X.
+*
+* X touches nothing but capacitors, so without this it sits at 0 V
+* while the other input is at 0.9 -- a permanent 0.9 V differential
+* that rails the amp. In the real circuit phi1 auto-zeroes X to the
+* output; this 1 Tohm resistor does the same job at DC.
+*
+* Its pole with C_F is 1/(2*pi*1T*200f) = 0.8 Hz, so it is invisible
+* at the frequencies settling actually happens at.
+Rdc  vout  nx 1T
+
+Xota vcm nx vout ota_en nbias VDD VSS sc_ota
+Cl vout 0 {CL}
+
+.control
+set color0=white
+
+let tstep  = 1e-6
+let tslot  = 5.12e-6
+let tend   = tstep + tslot
+let tfinal = 35e-6
+
+echo " "
+echo "=== settling in the phi2 configuration ==="
+tran 5n 40u
+
+meas tran v_before FIND v(vout) AT=0.9e-6
+meas tran v_slotend FIND v(vout) AT=$&tend
+meas tran v_final  FIND v(vout) AT=$&tfinal
+
+let swing_mv = (v_final - v_before)*1e3
+let err_mv   = (v_slotend - v_final)*1e3
+
+print v_before
+print v_final
+print swing_mv
+print v_slotend
+print err_mv
+
+echo " "
+echo "ACCEPTANCE: abs(err_mv) < 0.5"
+echo "  err_mv is how far the output still is from its settled value"
+echo "  when the slot ends. That is the real spec; phase margin only"
+echo "  matters through its effect on this number."
+
+echo " "
+echo "--- how the error decays, to see the ringing ---"
+let t1 = tstep + 1e-6
+let t2 = tstep + 2e-6
+let t3 = tstep + 3e-6
+let t4 = tstep + 4e-6
+meas tran e1 FIND v(vout) AT=$&t1
+meas tran e2 FIND v(vout) AT=$&t2
+meas tran e3 FIND v(vout) AT=$&t3
+meas tran e4 FIND v(vout) AT=$&t4
+let d1 = (e1-v_final)*1e3
+let d2 = (e2-v_final)*1e3
+let d3 = (e3-v_final)*1e3
+let d4 = (e4-v_final)*1e3
+print d1
+print d2
+print d3
+print d4
+echo "  (mV from final at 1, 2, 3, 4 us after the step)"
+echo "  Sign changes mean ringing. Monotonic decay means damped."
+
+wrdata ota_settling.csv v(vout) v(nstep)
+plot v(vout)
+.endc
+.end

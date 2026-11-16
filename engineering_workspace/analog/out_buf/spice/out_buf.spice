@@ -1,0 +1,98 @@
+* ============================================================
+* out_buf.spice -- unity-gain output buffer, SKY130
+*
+* One cell, used twice on this tile:
+*   - buffers the reference to ua[0]
+*   - buffers the PWM DAC output to ua[2]
+*
+* Topology: two-stage Miller-compensated OTA.
+*   Stage 1  NMOS differential pair, PMOS mirror load
+*   Stage 2  common-source PMOS, NMOS current-source load
+*   Cc + Rz  Miller compensation with a nulling resistor
+*
+* INPUT COMMON-MODE LIMIT -- read this before using it on the DAC.
+* An NMOS input pair cannot follow its input down to ground. The
+* usable input floor is roughly
+*     VSS + Vds,sat(tail) + Vgs(input)  ~  0.6-0.7 V
+* That is fine for a ~1.2 V reference. It is NOT fine for a DAC that
+* sweeps to 0 V. Either restrict the DAC swing to about 0.7-1.6 V, or
+* replace this input stage with a complementary (rail-to-rail) pair.
+* Decide this before layout -- it changes the cell.
+*
+* DRIVE. The output stage is class A, so the sink current is set by
+* the tail of M8 and the source current by M7. Quiescent current is
+* set by ibias and the W ratios below.
+*
+* CORRECTED 2026-11-14. The earlier note here claimed the 500 ohm
+* pad path "needs milliamps". That misread the Tiny Tapeout analog
+* spec, which gives the pad-to-project path as resistance < 500 ohm,
+* capacitance < 5 pF, max current 4 mA. The 500 ohm is in SERIES
+* between this output and the pad -- it is not a shunt load, and the
+* 4 mA is the pin's limit rather than a requirement.
+*
+* Driving 5 pF through 500 ohm into a high-impedance meter or scope
+* needs microamps. The series RC is tau = 2.5 ns, so roughly 64 MHz,
+* irrelevant to a DC reference or a 1.5625 MHz DAC. Do NOT size the
+* output stage for milliamps on account of that number.
+*
+* Scale wout/ibias to taste and re-check phase margin -- increasing
+* wout moves the output pole.
+* ============================================================
+
+.subckt out_buf vin vout vbias_n VDD VSS
+
+.param wi    = 4        $ input pair width (um)
+.param li    = 1        $ input pair length (um)
+.param wl    = 4        $ mirror load width
+.param ll    = 1        $ mirror load length
+.param wout  = 20       $ output PMOS width -- scale for drive
+.param lout  = 0.5
+.param wtail = 4
+.param ltail = 1
+.param cc    = 1.0p     $ Miller capacitor
+.param rz    = 4k       $ nulling resistor
+
+* ---- tail current source -------------------------------------
+XMtail ntail vbias_n VSS VSS sky130_fd_pr__nfet_01v8
++       L={ltail} W={wtail} nf=1 m=1
+
+* ---- NMOS input pair -----------------------------------------
+* REV 2, 2026-11-14. THE GATES WERE SWAPPED AND THE LOOP WAS
+* POSITIVE FEEDBACK. This cell latched to a rail and never tracked
+* its input -- and because it is instantiated twice, both ua[0] and
+* ua[2] were dead. The pwm_dac "pass" of 1.382 mV ripple at 1.636 V
+* was a railed output, not a working DAC.
+*
+* XM3 is the diode-connected load, so n1 is the mirror REFERENCE and
+* n2 is the mirror OUTPUT that drives XM7's gate. The feedback input
+* must therefore sit on the n1 side:
+*   vout up -> XM1 sinks more -> n1 down -> XM4 sources more into n2
+*            -> n2 up -> XM7 |Vgs| down -> vout back down.   NEGATIVE
+* Rev 1 had vout on the n2 side instead:
+*   vout up -> XM2 sinks more -> n2 down -> XM7 |Vgs| up
+*            -> vout up further.                             POSITIVE
+*
+* Forward path is unchanged and still non-inverting, as a unity-gain
+* follower needs: vin up -> XM2 sinks more -> n2 down -> vout up.
+*
+* Same mistake, same fix, as sc_ota: the feedback goes on the
+* mirror-reference side. Check this FIRST in any new two-stage amp.
+XM1 n1 vout ntail VSS sky130_fd_pr__nfet_01v8 L={li} W={wi} nf=1 m=1
+XM2 n2 vin  ntail VSS sky130_fd_pr__nfet_01v8 L={li} W={wi} nf=1 m=1
+
+* ---- PMOS mirror load ----------------------------------------
+XM3 n1 n1 VDD VDD sky130_fd_pr__pfet_01v8 L={ll} W={wl} nf=1 m=1
+XM4 n2 n1 VDD VDD sky130_fd_pr__pfet_01v8 L={ll} W={wl} nf=1 m=1
+
+* ---- second stage --------------------------------------------
+XM7 vout n2 VDD VDD sky130_fd_pr__pfet_01v8 L={lout} W={wout} nf=1 m=1
+XM8 vout vbias_n VSS VSS sky130_fd_pr__nfet_01v8
++       L={ltail} W={wtail*4} nf=1 m=1
+
+* ---- Miller compensation -------------------------------------
+* TODO before layout: replace Cc with cap_mim_m3_1 and Rz with a
+* high-resistance poly device so the extracted view matches.
+Rz1 n2  nz {rz}
+Cc1 nz  vout {cc}
+
+.ends out_buf
